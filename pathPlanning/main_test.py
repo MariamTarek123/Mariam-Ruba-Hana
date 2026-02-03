@@ -64,8 +64,7 @@ planner_ghost = PathPlanner(
     max_edge_len=5.0,
     ghost_filter_enabled=True,
     ghost_max_neighbor_dist=4.0,
-    ghost_min_neighbors=1,
-    ghost_y_alignment_tolerance=2.5  # Relaxed for test 3 (isolated ghost far from track)
+    ghost_min_neighbors=1
 )
 print(
     f"Planner config: robot_radius={planner_ghost.robot_radius}, safety_margin={planner_ghost.safety_margin}, "
@@ -143,6 +142,58 @@ if path_points_ghost_between:
     plt.scatter(px_gb, py_gb, c='green', s=20, alpha=0.5)
 
 plt.title('Test 4: Ghost Cone Between Real Cones (Harder case)')
+plt.legend()
+plt.axis('equal')
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Test 5: Ghost cone on curved track
+print("\n" + "="*60)
+print("TEST 5: GHOST CONE ON CURVED TRACK")
+print("="*60)
+
+cone_data_curved = [
+    # Right Side (Yellow) - curved path
+    (0, 0, 'y'), (2, 0.3, 'y'), (4, 1.2, 'y'), (6, 2.1, 'y'), (8, 3.2, 'y'), (10, 4.1, 'y'),
+    # Left Side (Blue) - curved path
+    (0, 3, 'b'), (2, 3.3, 'b'), (4, 4.2, 'b'), (6, 5.1, 'b'), (8, 6.2, 'b'), (10, 7.1, 'b'),
+    # Ghost cone off the curved trajectory
+    (5.1, 2.5, 'y')  # Should be at ~1.65 following curve, but is at 2.5
+]
+
+car_data_curved = [(0.0, 1.5, 0.0)]
+
+planner_curved = PathPlanner(
+    robot_radius=0.5,
+    safety_margin=0.2,
+    max_edge_len=5.0,
+    ghost_filter_enabled=True,
+    ghost_trajectory_deviation_tolerance=1.0
+)
+print(
+    f"Planner config: robot_radius={planner_curved.robot_radius}, safety_margin={planner_curved.safety_margin}, "
+    f"max_edge_len={planner_curved.max_edge_len}, ghost_filter_enabled={planner_curved.ghost_filter_enabled}"
+)
+path_points_curved = planner_curved.execute_cycle(cone_data_curved, car_data_curved)
+
+print(f"Path Generated with {len(path_points_curved)} points.")
+
+xs_curved = [c[0] for c in cone_data_curved]
+ys_curved = [c[1] for c in cone_data_curved]
+colors_curved = ['gold' if c[2] == 'y' else 'blue' for c in cone_data_curved]
+
+plt.figure(figsize=(10, 6))
+plt.scatter(xs_curved, ys_curved, c=colors_curved, s=100, label='Cones', edgecolors='black', linewidth=2)
+plt.plot(car_data_curved[0][0], car_data_curved[0][1], 'r^', markersize=15, label='Car Start')
+
+if path_points_curved:
+    px_curved = [p[0] for p in path_points_curved]
+    py_curved = [p[1] for p in path_points_curved]
+    plt.plot(px_curved, py_curved, '-g', linewidth=2, label='Calculated Path')
+    plt.scatter(px_curved, py_curved, c='green', s=20, alpha=0.5)
+
+plt.title('Test 5: Ghost Cone on Curved Track')
 plt.legend()
 plt.axis('equal')
 plt.grid(True, alpha=0.3)

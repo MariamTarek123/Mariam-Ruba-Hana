@@ -14,7 +14,7 @@ class PathPlanner:
         ghost_max_neighbor_dist=6.0,
         ghost_min_neighbors=1,
         ghost_partner_x_tolerance=1.5,
-        ghost_y_alignment_tolerance=0.8
+        ghost_trajectory_deviation_tolerance=1.0
     ):
         """
         Initialize the path planner with configuration parameters.
@@ -26,7 +26,7 @@ class PathPlanner:
         self.ghost_max_neighbor_dist = ghost_max_neighbor_dist
         self.ghost_min_neighbors = ghost_min_neighbors
         self.ghost_partner_x_tolerance = ghost_partner_x_tolerance
-        self.ghost_y_alignment_tolerance = ghost_y_alignment_tolerance
+        self.ghost_trajectory_deviation_tolerance = ghost_trajectory_deviation_tolerance
 
     def execute_cycle(self, cone_data, car_data):
         """
@@ -47,7 +47,7 @@ class PathPlanner:
                 max_neighbor_dist=self.ghost_max_neighbor_dist,
                 min_neighbors=self.ghost_min_neighbors,
                 partner_x_tolerance=self.ghost_partner_x_tolerance,
-                y_alignment_tolerance=self.ghost_y_alignment_tolerance
+                trajectory_deviation_tolerance=self.ghost_trajectory_deviation_tolerance
             )
         else:
             filtered_cone_data = cone_data

@@ -5,23 +5,94 @@ Applies color matching, distance pruning, and collision detection.
 
 import numpy as np
 import networkx as nx
+from scipy.interpolate import splprep, splev
 from .collision import is_collision, build_obstacle_tree
 
 
-def remove_ghost_cones(cone_data, max_neighbor_dist=6.0, min_neighbors=1, partner_x_tolerance=1.5, y_alignment_tolerance=0.8):
+def _fit_trajectory_curve(cone_positions):
+    """
+    Fit a smooth spline through cone positions (sorted by X).
+    Returns a function that predicts Y given X along the trajectory.
+    
+    :param cone_positions: List of (x, y) tuples
+    :return: Function f(x) -> y, or None if fitting fails
+    """
+    if len(cone_positions) < 3:
+        return None
+    
+    # Sort by X coordinate
+    sorted_cones = sorted(cone_positions, key=lambda c: c[0])
+    xs = np.array([c[0] for c in sorted_cones])
+    ys = np.array([c[1] for c in sorted_cones])
+    
+    try:
+        # Fit B-spline through trajectory
+        tck, _ = splprep([xs, ys], s=0.1, k=min(3, len(xs)-1))
+        
+        def trajectory_func(x_val):
+            # Use spline to predict Y at given X
+            u_val = np.interp(x_val, xs, np.linspace(0, 1, len(xs)))
+            xy = splev(u_val, tck)
+            return xy[1]  # Return Y coordinate
+        
+        return trajectory_func
+    except:
+        return None
+
+
+def _calculate_trajectory_deviation(cone, same_color_cones):
+    """
+    Calculate how far a cone deviates from its color group's trajectory.
+    Only applies to curved tracks (detects curvature first).
+    
+    :param cone: (x, y, color) tuple to test
+    :param same_color_cones: List of same-color cones
+    :return: Deviation distance in meters, or None if can't fit or track is straight
+    """
+    if len(same_color_cones) < 4:
+        return None  # Need at least 4 cones to fit meaningful trajectory
+    
+    # Get cone positions without the candidate
+    other_positions = [(c[0], c[1]) for c in same_color_cones if c != cone]
+    
+    if len(other_positions) < 4:
+        return None
+    
+    # Check if track is actually curved (not just straight line with noise)
+    ys = [p[1] for p in other_positions]
+    y_variance = np.var(ys)
+    if y_variance < 1.0:  # Straight track, skip trajectory check
+        return None
+    
+    # Fit trajectory through other cones
+    trajectory_func = _fit_trajectory_curve(other_positions)
+    if trajectory_func is None:
+        return None
+    
+    # Calculate expected Y at this cone's X
+    try:
+        expected_y = trajectory_func(cone[0])
+        deviation = abs(cone[1] - expected_y)
+        return deviation
+    except:
+        return None
+
+
+def remove_ghost_cones(cone_data, max_neighbor_dist=6.0, min_neighbors=1, partner_x_tolerance=1.5, trajectory_deviation_tolerance=1.0):
     """
     Remove isolated or misaligned cones likely to be false positives ("ghosts").
+    Uses trajectory-based detection to work on curved tracks.
 
     A cone is kept if:
     1. It has at least `min_neighbors` other cones within `max_neighbor_dist`
     2. (Only if mixed colors exist) It has opposite-color partner cones aligned on X-axis
-    3. It is aligned with same-color group on Y-axis (not floating in middle)
+    3. It follows the trajectory of same-color cones (deviation < tolerance)
 
     :param cone_data: List of tuples [(x, y, color), ...]
     :param max_neighbor_dist: Neighbor radius for validation
     :param min_neighbors: Minimum count of neighbors required to keep a cone
     :param partner_x_tolerance: Max X-distance to find opposite-color partner
-    :param y_alignment_tolerance: Max Y-distance to find same-color group alignment
+    :param trajectory_deviation_tolerance: Max deviation from same-color trajectory in meters
     :return: Filtered cone data list
     """
     if len(cone_data) <= 1:
@@ -63,24 +134,33 @@ def remove_ghost_cones(cone_data, max_neighbor_dist=6.0, min_neighbors=1, partne
                 print(f"[GHOST FILTER] Removed ghost cone at ({cone[0]:.2f}, {cone[1]:.2f}, '{cone[2]}') - no opposite-color partner aligned on X-axis")
                 continue
         
-        # Check 3: Must be aligned with same-color group on Y-axis (not floating in middle)
+        # Check 3: Must be aligned with same-color group
         if has_mixed_colors:
             same_color_cones = [c for c in cone_data if c[2] == cone[2]]
             
-            if len(same_color_cones) > 1:
-                # Get Y-positions of other same-color cones
-                other_y_positions = [c[1] for c in same_color_cones if c != cone]
+            if len(same_color_cones) > 3:
+                # Look at nearby cones only (exclude distant outliers)
+                nearby_cones = [c for c in same_color_cones if abs(c[0] - cone[0]) <= 10.0]
                 
-                # Find if this cone's Y is aligned with the group
-                min_y = min(other_y_positions)
-                max_y = max(other_y_positions)
-                avg_y = np.mean(other_y_positions)
-                
-                # Cone should be close to the cluster center, not floating away
-                if abs(cone[1] - avg_y) > y_alignment_tolerance:
-                    removed_count += 1
-                    print(f"[GHOST FILTER] Removed ghost cone at ({cone[0]:.2f}, {cone[1]:.2f}, '{cone[2]}') - Y-misaligned with same-color group (avg Y={avg_y:.2f})")
-                    continue
+                if len(nearby_cones) > 2:
+                    ys = [c[1] for c in nearby_cones]
+                    y_variance = np.var(ys)
+                    
+                    if y_variance < 1.0:
+                        # STRAIGHT TRACK: Check Y-alignment
+                        avg_y = np.mean(ys)
+                        if abs(cone[1] - avg_y) > 0.8:
+                            removed_count += 1
+                            print(f"[GHOST FILTER] Removed ghost cone at ({cone[0]:.2f}, {cone[1]:.2f}, '{cone[2]}') - Y-misaligned (cone Y={cone[1]:.2f}, group avg Y={avg_y:.2f})")
+                            continue
+                    else:
+                        # CURVED TRACK: Check trajectory deviation
+                        deviation = _calculate_trajectory_deviation(cone, nearby_cones)
+                        
+                        if deviation is not None and deviation > trajectory_deviation_tolerance:
+                            removed_count += 1
+                            print(f"[GHOST FILTER] Removed ghost cone at ({cone[0]:.2f}, {cone[1]:.2f}, '{cone[2]}') - trajectory deviation {deviation:.2f}m > {trajectory_deviation_tolerance}m")
+                            continue
         
         filtered.append(cone)
 
